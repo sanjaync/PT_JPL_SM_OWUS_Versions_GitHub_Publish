@@ -1,6 +1,3 @@
-# Exclude the large zip archives
-zip_archives/
-
 # Exclude Python cache and checkpoint files
 __pycache__/
 *.pyc
