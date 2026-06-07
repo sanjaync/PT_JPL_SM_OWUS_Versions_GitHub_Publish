@@ -1,0 +1,152 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{1\baselineskip}
+
+\begin{document}
+
+\section*{Derivation: PT-JPL to v12.3.1 OWUS (Dynamic Beta \& Shapes)}
+
+This mathematical derivation tracks the evolution of the model from the foundational PT-JPL framework, through the Purdy et al. (2018) update, culminating in the custom v12.3.1 Optimal Water Use Strategy (OWUS) architecture featuring dynamic parameters, non-linear stress geometries, a singular base PT-JPL PET constraint, and an SM-only grid scaling.
+
+Notation convention used throughout: the Purdy et al. (2018) term is written strictly as lowercase $f_{\mathrm{rew}}$, while the bounded OWUS-normalized term is written strictly as uppercase $f_{\mathrm{REW}}$.
+
+\section*{1. The Foundational Base PT-JPL Model}
+
+The original model partitions total latent heat ($\lambda E$) into three sources:
+
+\textbf{Canopy Interception ($\lambda E_{I}$):} Evaporation from plant intercepted water.
+
+
+$$\lambda E_{I} = f_{\mathrm{wet}}\,\alpha\,\frac{\Delta}{\Delta + \gamma}\,R_{n}^C$$
+
+
+where $f_{\mathrm{wet}}$ (relative humidity, $\mathrm{RH}^4$) defines the wet fraction of the canopy.
+
+\textbf{Soil Evaporation ($\lambda E_{S}$):} Standard evaporation from the soil surface.
+
+
+$$\lambda E_{S} = (1 - f_{\mathrm{wet}})\,f_{\mathrm{sm}}\,\alpha\,\frac{\Delta}{\Delta + \gamma}\,(R_{n}^S - G)$$
+
+
+The original soil moisture constraint ($f_{\mathrm{sm}}$) was implicitly calculated as $\mathrm{RH}^{\mathrm{VPD}}$.
+
+\textbf{Canopy Transpiration ($\lambda E_{C}$):} Plant-driven water flux.
+
+
+$$\lambda E_{C} = (1 - f_{\mathrm{wet}})\,f_{G}\,f_{T}\,f_{M}\,\alpha\,\frac{\Delta}{\Delta + \gamma}\,R_{n}^C$$
+
+
+This is limited by green plant fraction ($f_{G}$), temperature stress ($f_{T}$), and an optical plant moisture proxy ($f_{M}$).
+
+\section*{2. The Purdy et al. (2018) Update}
+
+The Purdy et al. update replaces implicit scalars with explicit surface soil moisture observations.
+
+\textbf{Explicit Soil Evaporation:} The implicit $f_{\mathrm{sm}}$ is replaced by Soil Relative Extractable Water ($f_{\mathrm{rew}}$):
+
+
+$$f_{\mathrm{rew}} = \frac{\theta_{\mathrm{obs}} - \theta_{\mathrm{wp}}}{\theta_{\mathrm{fc}} - \theta_{\mathrm{wp}}}$$
+
+
+where $\theta_{\mathrm{obs}}$ is observed soil moisture, $\theta_{\mathrm{wp}}$ is wilting point, and $\theta_{\mathrm{fc}}$ is field capacity.
+
+\textbf{Fused Canopy Transpiration:} A relative humidity weighting factor ($W$) is introduced based on Volumetric Water Content ($\theta_{\mathrm{obs}}$) to determine when physical soil moisture governs the flux:
+
+
+$$W = \mathrm{RH}^{4(1-\theta_{\mathrm{obs}})(1-\mathrm{RH})}$$
+
+The original $f_{M}$ is fused with a new canopy-height derived soil moisture stressor ($f_{\mathrm{TREW}}$) to create the Fused Moisture Constraint ($f_{\mathrm{TRM}}$):
+
+
+$$f_{\mathrm{TRM}} = (1-W)\,f_{M} + W\,f_{\mathrm{TREW}}$$
+
+\section*{3. The v12.3.1 Evolution: Dynamic OWUS Architecture}
+
+The v12.3.1 evolution removes static canopy-height variables, introducing dynamic, optimized parameters ($S^\star$, $S_{\mathrm{wilt}}$, $\beta_{\mathrm{ww}}$), customizable stress shapes, a singular base PT-JPL PET constraint, and an SM-only grid scaling.
+
+\subsection*{Step A: Explicit vs. Implicit Soil Evaporation Disconnect}
+In the v12.3.1 OWUS architecture, the dynamic parameter and shape-stress framework is applied exclusively to the explicit soil moisture model ($f_{\mathrm{REW}}$). The original PT-JPL base soil evaporation formulation, which relies on the implicit $\mathrm{RH}^{\mathrm{VPD}}$ scalar, is excluded from OWUS scaling. Applying explicitly bounded volumetric water thresholds ($S^\star$, $S_{\mathrm{wilt}}$) to an implicit atmospheric proxy is physically inconsistent. Total latent heat from the unadulterated base model is preserved separately as a control reference.
+
+\subsection*{Step B: Plant Available Water ($f_{\mathrm{REW}}$)}
+
+Volumetric water content is converted to normalized Plant Available Water, strictly bounded between 0 and 1:
+
+
+$$f_{\mathrm{REW}} = \max\left(0, \min\left(1, \frac{\theta_{\mathrm{obs}} - \theta_{\mathrm{wp}}}{\theta_{\mathrm{fc}} - \theta_{\mathrm{wp}}}\right)\right)$$
+
+\subsection*{Step C: Time-Adaptive Dynamic Parameters}
+
+To account for seasonal shifts in plant water use strategy, parameters are shifted dynamically. A K-Means clustering algorithm ($K=2$) evaluates a 30-day rolling mean of $LAI$ and Base PT-JPL $\mathrm{PET}$. The assigned cluster ($k \in \{0, 1\}$) dictates the structural parameter multipliers ($m_k$):
+
+
+$$\{S^\star,\,S_{\mathrm{wilt}},\,\beta_{\mathrm{ww}}\}_{k} = m_{k}\,\{S^\star,\,S_{\mathrm{wilt}},\,\beta_{\mathrm{ww}}\}_{\mathrm{base}}$$
+
+A strict numerical floor guarantees the physical threshold hierarchy is never violated during dynamic scaling:
+
+
+$$S^\star_{k} = \max\left(S^\star_{k},\, S_{\mathrm{wilt},k} + 10^{-4}\right)$$
+
+$$\beta_{\mathrm{ww},k} = \min\left(\beta_{\mathrm{ww},k},\, 1.0\right)$$
+
+\subsection*{Step D: Shape-Based Stress Geometries ($f_{\mathrm{OWUS}}$)}
+
+The bounded operating vector ($s_{\mathrm{norm}}$) is calculated relative to the dynamic thresholds:
+
+
+$$s_{\mathrm{norm}} = \max\left(0, \min\left(1, \frac{f_{\mathrm{REW}} - S_{\mathrm{wilt},k}}{S^\star_{k} - S_{\mathrm{wilt},k}}\right)\right)$$
+
+This maps to one of three exact shape functions to define the stress descent curve ($f_{\mathrm{shape}}$), controlled by parameter $p$:
+
+$$\begin{aligned} \text{Linear: } & f_{\mathrm{shape}} = \beta_{\mathrm{ww},k} \cdot s_{\mathrm{norm}} \\ \text{Exponential: } & f_{\mathrm{shape}} = \begin{cases} \beta_{\mathrm{ww},k} \cdot s_{\mathrm{norm}} & \text{if } |1 - e^p| < 10^{-6} \\ \beta_{\mathrm{ww},k} \cdot \frac{1 - e^{p \cdot s_{\mathrm{norm}}}}{1 - e^p} & \text{otherwise} \end{cases} \\ \text{Sigmoid: } & f_{\mathrm{shape}} = \beta_{\mathrm{ww},k} \cdot \frac{1 - 2^{-((s_{\mathrm{norm}} + 10^{-6})/0.5)^p}}{1 - 2^{-(1.0/0.5)^p}} \end{aligned}$$
+
+The resulting curve evaluates the final OWUS response coefficient:
+
+
+$$f_{\mathrm{OWUS}} = \begin{cases} \beta_{\mathrm{ww},k} & \text{if } f_{\mathrm{REW}} > S^\star_{k} \\ 0 & \text{if } f_{\mathrm{REW}} \le S_{\mathrm{wilt},k} \\ f_{\mathrm{shape}} & \text{otherwise} \end{cases}$$
+
+\subsection*{Step E: Fused Integration with Regularization}
+
+Unlike Purdy et al. (2018) which used raw $\theta_{\mathrm{obs}}$, v12.3.1 utilizes the normalized $f_{\mathrm{REW}}$ to drive the atmospheric weighting factor:
+
+
+$$W = \mathrm{RH}^{4(1-f_{\mathrm{REW}})(1-\mathrm{RH})}$$
+
+$$f_{\mathrm{TRM}} = (1-W)\,f_{M} + W\,f_{\mathrm{OWUS}}$$
+
+To prevent asymptotic division by near-zero at extremely sparse canopy covers, a safe boundary is enforced on the plant proxy:
+
+
+$$\lambda E_{C}^{\ast} = \lambda E_{C,\mathrm{orig}} \cdot \frac{f_{\mathrm{TRM}}}{\max(f_{M}, 0.05)}$$
+
+\subsection*{Step F: Gash Interception \& PET Limits}
+
+Interception ($\lambda E_G$) is calculated analytically using a dynamic Gash framework factoring rainfall events ($R_{\mathrm{ev}}$), free throughfall ($p$), specific storage ($S$), and canopy cover ($c$). Total available energy ($\mathrm{PET}_{\mathrm{rem}}$) is constrained by the base Priestley-Taylor PET:
+
+
+$$\mathrm{PET}_{\mathrm{rem}} = \max(\mathrm{PET}_{\mathrm{PT}} - \lambda E_G,\, 0)$$
+
+Three hierarchical capping regimes restrict the summation of soil evaporation ($\lambda E_S$) and modified canopy transpiration ($\lambda E_C^\ast$):
+
+\textbf{1. Total Capped (TC):} A strict upper bound on the system.
+
+
+$$\lambda E_{\mathrm{TC}} = \lambda E_G + \min\left(\lambda E_S + \lambda E_C^\ast,\, \mathrm{PET}_{\mathrm{rem}}\right)$$
+
+\textbf{2. Canopy Capped (CC):} Soil evaporation priority; residual energy limits the canopy.
+
+
+$$\lambda E_{\mathrm{CC}} = \lambda E_G + \lambda E_S + \max\left(\lambda E_C^\ast - \max(\lambda E_S + \lambda E_C^\ast - \mathrm{PET}_{\mathrm{rem}}, 0),\, 0\right)$$
+
+\textbf{3. Soil Capped (SC):} Proportional scaling of canopy transpiration.
+
+
+$$\lambda E_{\mathrm{SC}} = \lambda E_G + \lambda E_S + \lambda E_C^\ast \cdot \min\left( \gamma, 1 \right)$$
+
+
+where $\gamma = \frac{\mathrm{PET}_{\mathrm{rem}} - \lambda E_S}{\lambda E_C^\ast}$ if $(\lambda E_S + \lambda E_C^\ast) > \mathrm{PET}_{\mathrm{rem}}$, else $1$.
+
+\end{document}

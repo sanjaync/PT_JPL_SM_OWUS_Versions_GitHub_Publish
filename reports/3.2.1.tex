@@ -1,0 +1,166 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{1\baselineskip}
+
+\begin{document}
+
+Here is the exact mathematical mapping of the equations from the 2018 PT-JPL-SM paper to the targeted changes in your v3.2 Python code.
+
+Unlike the more complex v12.3 and v13.3 scripts, your v3.2 code is highly surgical. It leaves the paper's original soil evaporation and canopy interception logic entirely untouched, targeting only the canopy transpiration equations to strip out canopy-height assumptions and replace them with a linear OWUS constraint.
+
+\section*{1. Soil Moisture Normalization}
+
+\textbf{2018 Paper (Equation 6):} The paper calculates Relative Extractable Water ($f_{\mathrm{rew}}$) without explicit bounds.
+\[
+  f_{\mathrm{rew}} = \frac{\theta_{\mathrm{obs}} - \theta_{\mathrm{wp}}}{\theta_{\mathrm{fc}} - \theta_{\mathrm{wp}}}
+\]
+
+\textbf{v3.2 Code:} You explicitly clamp this fraction between 0.0 and 1.0 to calculate Plant Available Water ($f_{\mathrm{REW}}$), ensuring numerical stability if soil moisture observations exceed field capacity or drop below the wilting point.
+\[
+  f_{\mathrm{REW}} = \max\left(0, \min\left(1, \frac{\theta_{\mathrm{obs}} - \theta_{\mathrm{wp}}}{\theta_{\mathrm{fc}} - \theta_{\mathrm{wp}}}\right)\right)
+\]
+
+\section*{2. Deleting the Canopy-Height Stress Thresholds}
+
+\textbf{2018 Paper (Equations 9, 10, \& 11):} The paper derives a critical soil moisture threshold ($\theta_{\mathrm{CR}}$) based on atmospheric demand ($\mathrm{PET}$) and a canopy height scalar ($CH_{\mathrm{scalar}}$).
+\[
+  p = \frac{1}{1 + \mathrm{PET}} - a\frac{1}{1 + CH}
+\]
+\[
+  \theta_{\mathrm{wp}_{CH}} = \frac{\theta_{\mathrm{wp}}}{CH_{\mathrm{scalar}}}
+\]
+\[
+  \theta_{\mathrm{CR}} = (1 - p)(\theta_{\mathrm{fc}} - \theta_{\mathrm{wp}_{CH}}) + \theta_{\mathrm{wp}_{CH}}
+\]
+
+\textbf{v3.2 Code:} You completely deleted these equations. Instead of guessing the critical stress point from canopy height, your code explicitly defines the physiological operating window using predefined OWUS parameters: $S^\star$ (stress onset) and $S_{\mathrm{wilt}}$ (stomatal closure).
+
+\section*{3. The Transpiration Stress Curve}
+
+\textbf{2018 Paper (Equation 8):} The moisture stress scalar ($f_{\mathrm{TREW}}$) is calculated using a power function dictated by the canopy height scalar ($CH_{\mathrm{scalar}}$).
+\[
+  f_{\mathrm{TREW}} = 1 - \left[ \frac{\theta_{\mathrm{CR}} - \theta_{\mathrm{obs}}}{\theta_{\mathrm{CR}} - \theta_{\mathrm{wp}_{CH}}} \right]^{CH_{\mathrm{scalar}}}
+\]
+
+\textbf{v3.2 Code:} You replaced $f_{\mathrm{TREW}}$ with the $f_{\mathrm{OWUS}}$ variable. Instead of a canopy-height-driven power function, v3.2 uses a strict piecewise linear function bounded by a well-watered maximum efficiency ($\beta_{\mathrm{ww}}$).
+\[
+  f_{\mathrm{OWUS}} = \begin{cases}
+    \beta_{\mathrm{ww}} & \text{if } f_{\mathrm{REW}} > S^\star \\
+    \beta_{\mathrm{ww}} \cdot \left(\frac{f_{\mathrm{REW}} - S_{\mathrm{wilt}}}{S^\star - S_{\mathrm{wilt}}}\right) & \text{if } S_{\mathrm{wilt}} < f_{\mathrm{REW}} \le S^\star \\
+    0 & \text{if } f_{\mathrm{REW}} \le S_{\mathrm{wilt}}
+  \end{cases}
+\]
+
+\section*{4. Fusing the Moisture Constraint}
+
+\textbf{2018 Paper (Equation 12):} The final constraint on transpiration ($f_{\mathrm{TRM}}$) is calculated by weighting the optical greenness proxy ($f_{\mathrm{M}}$) against the moisture proxy ($f_{\mathrm{TREW}}$) using relative humidity ($\mathrm{RH}$) and Volumetric Water Content ($\mathrm{VWC}$).
+\[
+  f_{\mathrm{TRM}} = \left(1 - \mathrm{RH}^{4(1-\mathrm{VWC})(1-\mathrm{RH})}\right)f_{\mathrm{M}} + \left(\mathrm{RH}^{4(1-\mathrm{VWC})(1-\mathrm{RH})}\right)f_{\mathrm{TREW}}
+\]
+
+\textbf{v3.2 Code:} The weighting framework remains mathematically similar to the original paper, but instead of using raw Volumetric Water Content ($\mathrm{VWC}$, represented as $\theta_{\mathrm{obs}}$) to calculate the weighting factor ($W$), your code now uses the bounded Plant Available Water ($f_{\mathrm{REW}}$). It also substitutes the new linear $f_{\mathrm{OWUS}}$ in place of $f_{\mathrm{TREW}}$.
+\[
+  W = \mathrm{RH}^{4(1-f_{\mathrm{REW}})(1-\mathrm{RH})}
+\]
+\[
+  f_{\mathrm{TRM}} = (1 - W)f_{\mathrm{M}} + W \cdot f_{\mathrm{OWUS}}
+\]
+
+\section*{5. Full v3.2 Derivation (Step-by-Step)}
+
+Here is the full, step-by-step mathematical derivation of the evapotranspiration model as strictly implemented in your v3.2 code.
+
+\subsection*{Step 1: The Core Energy Balance (Priestley-Taylor)}
+
+The model is built on the Priestley-Taylor (PT) equation, which calculates the potential latent heat flux ($\mathrm{PET}$) driven by available atmospheric energy.
+\[
+  \mathrm{PET} = \alpha \frac{\Delta}{\Delta + \gamma} (R_n - G)
+\]
+
+Where:
+\[
+  \alpha = 1.26,\quad \Delta = \frac{d e_s}{dT},\quad \gamma = \text{psychrometric constant},\quad R_n = \text{net radiation},\quad G = \text{ground heat flux}
+\]
+
+\subsection*{Step 2: Radiation Partitioning}
+
+The total net radiation ($R_n$) is partitioned into energy reaching the plant canopy ($R_n^C$) and energy reaching the soil surface ($R_n^S$) using Beer's Law, driven by the Leaf Area Index ($\mathrm{LAI}$).
+\[
+  R_n^C = R_n\left(1 - e^{-k\,\mathrm{LAI}}\right),\quad R_n^S = R_n e^{-k\,\mathrm{LAI}}
+\]
+
+\subsection*{Step 3: Evaporation Components (Interception and Soil)}
+
+The total latent heat flux is split into three components. The v3.2 script uses the standard PT-JPL-SM formulations for the first two components: evaporation from intercepted water on the canopy ($\lambda E_I$) and evaporation from the soil ($\lambda E_S$).
+
+First, the fraction of the wet surface ($f_{\mathrm{wet}}$) and the Relative Extractable Water ($f_{\mathrm{rew}}$) are defined:
+\[
+  f_{\mathrm{wet}} = \mathrm{RH}^4,\quad f_{\mathrm{rew}} = \frac{\theta_{\mathrm{obs}} - \theta_{\mathrm{wp}}}{\theta_{\mathrm{fc}} - \theta_{\mathrm{wp}}}
+\]
+
+Where $\mathrm{RH}$ is Relative Humidity, $\theta_{\mathrm{obs}}$ is surface soil moisture, $\theta_{\mathrm{wp}}$ is the wilting point, and $\theta_{\mathrm{fc}}$ is field capacity.
+
+\textbf{1. Canopy Interception ($\lambda E_I$):}
+\[
+  \lambda E_I = f_{\mathrm{wet}}\,\alpha\,\frac{\Delta}{\Delta + \gamma}\,R_n^C
+\]
+
+\textbf{2. Soil Evaporation ($\lambda E_S$):}
+\[
+  \lambda E_S = f_{\mathrm{rew}}(1 - f_{\mathrm{wet}})\,\alpha\,\frac{\Delta}{\Delta + \gamma}\,R_n^S
+\]
+
+\subsection*{Step 4: The Unstressed Transpiration Baseline}
+
+Before applying root-zone moisture stress, the model calculates a baseline canopy transpiration ($\lambda E_{C,\mathrm{orig}}$) heavily dependent on atmospheric conditions and optical plant greenness.
+\[
+  \lambda E_{C,\mathrm{orig}} = (1 - f_{\mathrm{wet}})\,f_{\mathrm{G}}\,f_{\mathrm{T}}\,\alpha\,\frac{\Delta}{\Delta + \gamma}\,R_n^C
+\]
+
+Where:
+\[
+  f_{\mathrm{G}} = \text{green canopy fraction},\quad f_{\mathrm{T}} = \text{plant temperature constraint},\quad f_{\mathrm{M}} = \text{optical moisture proxy}
+\]
+
+\subsection*{Step 5: The OWUS Framework}
+
+To explicitly model plant hydraulic stress, the v3.2 code calculates the Optimal Water Use Strategy (OWUS) constraint.
+
+\textbf{Part A: Bounded Plant Available Water ($f_{\mathrm{REW}}$)}
+\[
+  f_{\mathrm{REW}} = \max\left(0, \min\left(1, \frac{\theta_{\mathrm{obs}} - \theta_{\mathrm{wp}}}{\theta_{\mathrm{fc}} - \theta_{\mathrm{wp}}}\right)\right)
+\]
+
+\textbf{Part B: The Piecewise Linear Stress Scalar ($f_{\mathrm{OWUS}}$)}
+\[
+  f_{\mathrm{OWUS}} = \begin{cases}
+    \beta_{\mathrm{ww}} & \text{if } f_{\mathrm{REW}} > S^\star \\
+    \beta_{\mathrm{ww}}\left(\frac{f_{\mathrm{REW}} - S_{\mathrm{wilt}}}{S^\star - S_{\mathrm{wilt}}}\right) & \text{if } S_{\mathrm{wilt}} < f_{\mathrm{REW}} \le S^\star \\
+    0 & \text{if } f_{\mathrm{REW}} \le S_{\mathrm{wilt}}
+  \end{cases}
+\]
+
+\textbf{Part C: The Fused Transpiration Constraint ($f_{\mathrm{TRM}}$)}
+\[
+  W = \mathrm{RH}^{4(1-f_{\mathrm{REW}})(1-\mathrm{RH})},\quad f_{\mathrm{TRM}} = (1 - W)f_{\mathrm{M}} + W f_{\mathrm{OWUS}}
+\]
+
+\subsection*{Step 6: The Final Adjusted Transpiration \& Total ET}
+
+The model adjusts the baseline transpiration by mathematically swapping the original optical proxy ($f_{\mathrm{M}}$) with the newly derived fused constraint ($f_{\mathrm{TRM}}$). A conditional mask ensures no division by zero occurs if $f_{\mathrm{M}}$ drops to zero.
+\[
+  \lambda E_{C}^\ast = \begin{cases}
+    \lambda E_{C,\mathrm{orig}} \cdot \frac{f_{\mathrm{TRM}}}{f_{\mathrm{M}}} & \text{if } f_{\mathrm{M}} > 0 \\
+    0 & \text{if } f_{\mathrm{M}} \le 0
+  \end{cases}
+\]
+
+Finally, the total latent heat flux is calculated as the un-capped sum of the three independently derived components:
+\[
+  \lambda E = \lambda E_I + \lambda E_S + \lambda E_{C}^\ast
+\]
+
+\end{document}

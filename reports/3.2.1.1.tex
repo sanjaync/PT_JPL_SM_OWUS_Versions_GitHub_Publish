@@ -1,0 +1,58 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{1\baselineskip}
+
+\begin{document}
+
+\section*{1. Soil Moisture Normalization}
+
+The model continues to calculate Plant Available Water ($f_{\mathrm{REW}}$) by clamping the Relative Extractable Water between 0.0 and 1.0, ensuring numerical stability for soil moisture observations.
+
+$$  f_{\mathrm{REW}} = \max\left(0, \min\left(1, \frac{\theta_{\mathrm{obs}} - \theta_{\mathrm{wp}}}{\theta_{\mathrm{fc}} - \theta_{\mathrm{wp}}}\right)\right)$$
+
+\section*{2. The Analytical OWUS Framework (v3.2.1.1)}
+
+In v3.2.1.1, the piecewise linear approximation of $f_{\mathrm{OWUS}}$ is replaced with the full sigmoidal solution derived from the SPAC eco-physiological model.
+
+\subsection*{Part A: The Well-Watered Plateau ($f_{\mathrm{ww}}$)}
+
+Instead of a fixed $\beta_{\mathrm{ww}}$, the maximum transpiration ratio under non-limiting soil moisture is dynamically calculated using \textbf{Equation (4)}. This plateau accounts for the coordination between atmospheric demand and plant hydraulic limits.
+
+$$    f_{\mathrm{ww}} = 1 - \frac{1}{2\Pi_R} \left[ 1 + \frac{\Pi_F}{2} - \sqrt{\left( \frac{\Pi_F}{2} + 1 \right)^2 - 2\Pi_F\Pi_R} \right]$$
+
+Where:
+\begin{itemize}
+\item $\Pi_R$: Plant hydraulic risk tolerance.
+\item $\Pi_F$: Degree of plant water flux control.
+\end{itemize}
+
+\subsection*{Part B: The Analytical Sigmoidal Stress Scalar ($f_{\mathrm{OWUS}}$)}
+
+The v3.2.1.1 code replaces piecewise thresholds ($S^\star$, $S_{\mathrm{wilt}}$) with the continuous analytical solution from \textbf{Equation (5)}. For any daily observed soil saturation ($s$, implemented as $f_{\mathrm{REW}}$), the value of $\beta$ (the $f_{\mathrm{OWUS}}$ scalar) is determined by numerically inverting the following relationship:
+
+$$    f_{\mathrm{REW}} = \left[ \frac{\Pi_T}{2\beta\Pi_S} \left( \sqrt{1 + \frac{4\beta\Pi_S^2}{\Pi_T} \left( 2(1-\beta) - \frac{\beta\Pi_F}{1-(1-\beta)\Pi_R} \right)} - 1 \right) \right]^{-\frac{1}{b}}$$
+
+Where:
+\begin{itemize}
+\item $\beta$: The emergent $f_{\mathrm{OWUS}}$ value ($0 \le \beta \le f_{\mathrm{ww}}$).
+\item $\Pi_T$: Soil-root water transport capacity.
+\item $\Pi_S$: Soil suitability for extraction.
+\item $b$: Soil pore size parameter.
+\end{itemize}
+
+\subsection*{Part C: Fused Transpiration Constraint ($f_{\mathrm{TRM}}$)}
+
+The weighting framework remains similar to previous versions, applying the original weighting factor ($W$) to the new analytical $f_{\mathrm{OWUS}}$.
+
+$$    W = \mathrm{RH}^{4(1-f_{\mathrm{REW}})(1-\mathrm{RH})},\quad f_{\mathrm{TRM}} = (1 - W)f_{\mathrm{M}} + W \cdot f_{\mathrm{OWUS}}$$
+
+\section*{3. Total ET Summation}
+
+The final latent heat flux is the un-capped sum of three independently derived components, adjusted by the ratio of the fused constraint to the optical proxy.
+
+$$    \lambda E = \lambda E_I + \lambda E_S + \left( \lambda E_{C,\mathrm{orig}} \cdot \frac{f_{\mathrm{TRM}}}{f_{\mathrm{M}}} \right)$$
+
+\end{document}

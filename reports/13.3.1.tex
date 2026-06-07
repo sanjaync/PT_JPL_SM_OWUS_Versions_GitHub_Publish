@@ -1,0 +1,211 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{graphicx}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{1\baselineskip}
+
+\begin{document}
+
+\section*{Derivation: PT-JPL to v13.3.1 OWUS}
+
+This mathematical derivation tracks the evolution of the model from the foundational PT-JPL framework to the Purdy et al.~(2018) update, culminating in the custom v13.3.1 Optimal Water Use Strategy (OWUS) architecture. Symbols are defined where they first appear, and each step explains how the flux terms are modified.
+
+\section*{1. The Foundational Base PT-JPL Model}
+
+The original model partitions total latent heat ($\lambda E$, in $\mathrm{W\,m^{-2}}$) into three sources:
+
+\textbf{Canopy Interception ($\lambda E_{I}$):} Evaporation from plant intercepted water.
+\begin{equation}
+\lambda E_{I} = f_{\mathrm{wet}}\,\alpha\,\frac{\Delta}{\Delta + \gamma}\,R_{n}^{C}
+\end{equation}
+where $f_{\mathrm{wet}}$ (wet canopy fraction, computed as $\mathrm{RH}^4$), $\alpha$ (Priestley--Taylor coefficient), $\Delta$ (slope of saturation vapor pressure curve), $\gamma$ (psychrometric constant), and $R_{n}^{C}$ (canopy net radiation) set the atmospheric energy supply.
+
+\textbf{Soil Evaporation ($\lambda E_{S}$):} Standard evaporation from the soil surface.
+\begin{equation}
+\lambda E_{S} = (1 - f_{\mathrm{wet}})\,f_{\mathrm{sm}}\,\alpha\,\frac{\Delta}{\Delta + \gamma}\,(R_{n}^{S} - G)
+\end{equation}
+where $G$ is soil heat flux, $R_{n}^{S}$ is soil net radiation, and the original soil moisture constraint ($f_{\mathrm{sm}}$) was implicitly calculated as $\mathrm{RH}^{\mathrm{VPD}}$.
+
+\textbf{Canopy Transpiration ($\lambda E_{C}$):} Plant-driven water flux.
+\begin{equation}
+\lambda E_{C} = (1 - f_{\mathrm{wet}})\,f_{\mathrm{green}}\,f_{\mathrm{T}}\,f_{\mathrm{M}}\,\alpha\,\frac{\Delta}{\Delta + \gamma}\,R_{n}^{C}
+\end{equation}
+This term is limited by green plant fraction ($f_{\mathrm{green}}$), temperature stress ($f_{\mathrm{T}}$), and plant moisture stress ($f_{\mathrm{M}}$) derived from optical greenness.
+
+\section*{2. The Purdy et al.~(2018) Update}
+
+The Purdy et al.~update replaces implicit scalars with explicit surface soil moisture observations.
+
+\textbf{Explicit Soil Evaporation:} The implicit $f_{\mathrm{sm}}$ is replaced by \textbf{Soil Relative Extractable Water} ($f_{\mathrm{rew}}$), a normalized soil moisture index. In this 2018 formulation, the notation is strictly lowercase:
+\begin{equation}
+  f_{\mathrm{rew}} = \frac{\theta_{\mathrm{obs}} - \theta_{\mathrm{wp}}}{\theta_{\mathrm{fc}} - \theta_{\mathrm{wp}}}
+\end{equation}
+where $\theta_{\mathrm{obs}}$ is observed soil moisture, $\theta_{\mathrm{wp}}$ is wilting point, and $\theta_{\mathrm{fc}}$ is field capacity.
+
+\textbf{Fused Canopy Transpiration:} A new weight ($W$) is introduced based on relative humidity ($\mathrm{RH}$) and raw volumetric water content ($\theta_{\mathrm{obs}}$) to determine when soil moisture governs the flux. Utilizing the exact Purdy (2018) formulation:
+\begin{equation}
+  W = \mathrm{RH}^{4(1-\theta_{\mathrm{obs}})(1-\mathrm{RH})}
+\end{equation}
+
+The original $f_{\mathrm{M}}$ is fused with a new canopy-height derived soil moisture stressor ($f_{\mathrm{TREW}}$) to create the \textbf{Fused Moisture Constraint} ($f_{\mathrm{TRM}}$):
+\begin{equation}
+  f_{\mathrm{TRM}} = (1-W)\,f_{\mathrm{M}} + W\,f_{\mathrm{TREW}}
+\end{equation}
+
+\section*{3. The v13.3.1 Evolution: Optimal Water Use Strategy (OWUS)}
+
+The v13.3.1 code generalizes the OWUS logic to handle multiple environmental proxies (including Vegetation Optical Depth) alongside dynamically optimized parameters, exact non-linear stress functions, and strict numerical stability bounds.
+
+\subsection*{Step A: Generalized Proxy Standardization ($\Phi$)}
+
+Instead of relying solely on volumetric water content, the model accepts a generalized proxy $\Phi_{\mathrm{raw}} \in \{\theta_{\mathrm{obs}}, \mathrm{VOD}_{\mathrm{C}}, \mathrm{VOD}_{\mathrm{L}}\}$. To make the evolution explicit, the bounded OWUS soil-water variable is denoted in uppercase as $f_{\mathrm{REW}}$ (distinct from 2018 lowercase $f_{\mathrm{rew}}$):
+\begin{equation}
+  f_{\mathrm{REW}} = \max\left(0,\, \min\left(1,\, \frac{\theta_{\mathrm{obs}} - \theta_{\mathrm{wp}}}{\theta_{\mathrm{fc}} - \theta_{\mathrm{wp}}}\right)\right)
+\end{equation}
+
+To interface with the OWUS thresholds, the chosen proxy is standardized to a $[0,1]$ scale ($\Phi$). For soil moisture, this uses the bounded $f_{\mathrm{REW}}$; for VOD, it uses historical site minimum and maximum observations:
+\begin{equation}
+  \Phi = \max\left(0,\, \min\left(1,\, \frac{\Phi_{\mathrm{raw}} - \Phi_{\mathrm{min}}}{\max(\Phi_{\mathrm{max}} - \Phi_{\mathrm{min}},\, 10^{-6})}\right)\right)
+\end{equation}
+
+The bounded \textbf{Normalized Stress Input} ($x$) is then calculated relative to the specific optimal ($S^\star$) and wilting ($S_{\mathrm{wilt}}$) thresholds of the plant:
+\begin{equation}
+  x = \max\left(0,\, \min\left(1,\, \frac{\Phi - S_{\mathrm{wilt}}}{\max(S^\star - S_{\mathrm{wilt}},\, 10^{-6})}\right)\right)
+\end{equation}
+
+\subsection*{Step B: Dynamic K-Means Clustering}
+
+A 30-day rolling window of Leaf Area Index ($\overline{\mathrm{LAI}}_{30\mathrm{d}}$) and baseline Potential Evapotranspiration ($\overline{\mathrm{PET}}_{30\mathrm{d}}$) is utilized to assign a daily ecohydrological regime $k \in \{0, 1\}$. Key OWUS parameters are scaled by regime-specific multipliers ($m_{k}$):
+\begin{equation}
+  \{S_{\mathrm{wilt}},\,S^\star,\,\beta_{\mathrm{ww}}\}_{k} = m_{k}\,\{S_{\mathrm{wilt}},\,S^\star,\,\beta_{\mathrm{ww}}\}
+\end{equation}
+where $\beta_{\mathrm{ww}}$ represents the well-watered (baseline) optimal use coefficient. A physical constraint ensures $S^\star_{k} \ge S_{\mathrm{wilt},k} + 10^{-4}$ and $\beta_{\mathrm{ww},k} \le 1.0$.
+
+\subsection*{Step C: Shape-Based Stressor ($f_{\mathrm{shape}}$)}
+
+The normalized stress input ($x$) is passed through one of three exact shape functions to define the descent curve, governed by a parameter $p = 2.0$. The response is bounded by the dynamically scaled $\beta_{\mathrm{ww},k}$. The exponential function includes a strict piecewise check to prevent numerical instability:
+\begin{align}
+  \text{Linear: } & f_{\mathrm{shape}} = \beta_{\mathrm{ww},k} \cdot x \\
+  \text{Exponential: } & f_{\mathrm{shape}} =
+  \begin{cases}
+    \beta_{\mathrm{ww},k} \cdot x, & \text{if } \left|1 - \exp(p)\right| < 10^{-6} \\
+    \beta_{\mathrm{ww},k} \cdot \dfrac{1 - \exp(p \cdot x)}{1 - \exp(p)}, & \text{otherwise}
+  \end{cases} \\
+  \text{Sigmoid: } & f_{\mathrm{shape}} = \beta_{\mathrm{ww},k} \cdot \frac{1 - 2^{-\left(\frac{x + 10^{-6}}{0.5}\right)^{p}}}{1 - 2^{-\left(\frac{1}{0.5}\right)^{p}}}
+\end{align}
+
+Boundary rules are absolute: if $\Phi \le S_{\mathrm{wilt},k}$, $f_{\mathrm{shape}} = 0$; if $\Phi > S^\star_{k}$, $f_{\mathrm{shape}} = \beta_{\mathrm{ww},k}$.
+
+\subsection*{Step D: Fused Integration (Decoupled RH Weighting)}
+
+Crucially, while the plant stress response ($f_{\mathrm{shape}}$) is driven by the generalized proxy ($\Phi$), the relative humidity constraint ($W$) remains strictly coupled to the physical soil moisture PAW ($f_{\mathrm{REW}}$) to represent atmospheric-soil boundary physics:
+\begin{equation}
+  W = \mathrm{RH}^{4(1-f_{\mathrm{REW}})(1-\mathrm{RH})}
+\end{equation}
+\begin{equation}
+  f_{\mathrm{TRM}} = (1-W)\,f_{\mathrm{M}} + W\,f_{\mathrm{shape}}
+\end{equation}
+\begin{equation}
+  \lambda E_{C}^{\ast} = \lambda E_{C,\mathrm{orig}} \cdot \frac{f_{\mathrm{TRM}}}{\max(f_{\mathrm{M}}, 0.05)}
+\end{equation}
+
+\subsection*{Step E: Interception and Energy Closure Boundaries}
+
+Standard interception is substituted with a dynamic, event-based Gash model ($I$). The gross interception is converted from $\mathrm{mm\,day^{-1}}$ to $\mathrm{W\,m^{-2}}$ using the exact latent heat of vaporization ($L_v$):
+\begin{equation}
+  \lambda E_{G} = I \cdot \left(\frac{L_v}{86400}\right)
+\end{equation}
+
+To maintain energy closure, remaining atmospheric potential ET is defined as $\mathrm{PET}_{\mathrm{rem}} = \max(\mathrm{PET}_{\mathrm{PT}} - \lambda E_{G},\, 0)$. Three distinct boundary scenarios are evaluated:
+\begin{align}
+  \textbf{Total Capped (TC): } & \lambda E_{\mathrm{TC}} = \lambda E_{G} + \min(\lambda E_{S} + \lambda E_{C}^{\ast},\; \mathrm{PET}_{\mathrm{rem}}) \\
+  \textbf{Canopy Capped (CC): } & \lambda E_{\mathrm{CC}} = \lambda E_{G} + \lambda E_{S} + \max(\lambda E_{C}^{\ast} - \max(\lambda E_{S} + \lambda E_{C}^{\ast} - \mathrm{PET}_{\mathrm{rem}},\, 0),\, 0) \\
+  \textbf{Soil Capped (SC): } & \lambda E_{\mathrm{SC}} = \lambda E_{G} + \lambda E_{S} + \lambda E_{C}^{\ast} \cdot \min\left(\gamma, 1\right)
+\end{align}
+where $\gamma = \frac{\mathrm{PET}_{\mathrm{rem}} - \lambda E_S}{\lambda E_C^\ast}$ if $(\lambda E_S + \lambda E_C^\ast) > \mathrm{PET}_{\mathrm{rem}}$, else $1$.
+
+\section*{4. Experimental Design and Grid-Search Variance Analysis}
+
+To rigorously evaluate the sensitivity of the v13.3.1 architecture, a comprehensive grid-search matrix evaluates every combination of the proposed mechanistic updates, yielding 216 distinct model variants.
+
+\subsection*{Step A: The Reduced Combinatorial Matrix (Explicit Proxies Only)}
+
+Because the dynamic parameter and shape-stress machinery are explicitly calibrated to physical thresholds, the original PT-JPL base soil evaporation formulation (which relies on the implicit $\mathrm{RH}^{\mathrm{VPD}}$ scalar) is excluded from the parameter grid. Applying explicitly bounded thresholds ($S^\star$, $S_{\mathrm{wilt}}$) to an implicit atmospheric proxy is physically inconsistent across all proxy types (SM, $\mathrm{VOD}_{\mathrm{C}}$, $\mathrm{VOD}_{\mathrm{L}}$).
+
+The total number of model variants ($N_{\mathrm{variants}}$) is defined by the product of seven analytical dimensions:
+\begin{equation}
+  N_{\mathrm{variants}} = N_{\mathrm{proxy}} \times N_{\mathrm{soil}} \times N_{\mathrm{owus}} \times N_{\mathrm{int}} \times N_{\mathrm{shape}} \times N_{\mathrm{dyn}} \times N_{\mathrm{cap}} = 216
+\end{equation}
+Explicitly,
+\begin{equation}
+  216 = 3 \times 1 \times 2 \times 2 \times 3 \times 2 \times 3
+\end{equation}
+
+Table \ref{tab:grid_search} details the parameter space for each dimension, categorized by its function within the modeling architecture.
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{@{}lllc@{}}
+\toprule
+\textbf{Architecture Domain} & \textbf{Parameter Dimension} & \textbf{Evaluated Options} & $\mathbf{n}$ \\
+\midrule
+\multirow{2}{*}{\textbf{Forcing \& Drivers}}
+ & Moisture Proxy ($\Phi$) & $\theta_{\mathrm{obs}}$, $\mathrm{VOD}_{\mathrm{C}}$, $\mathrm{VOD}_{\mathrm{L}}$ & 3 \\
+ & Interception Mechanics ($I$) & Implicit PT-JPL, Explicit Gash & 2 \\
+\midrule
+\multirow{2}{*}{\textbf{Core Mechanics}}
+ & Soil Evaporation Constraint & Explicit SM ($f_{\mathrm{rew}}$) & 1 \\
+ & Stress Topology ($f_{\mathrm{shape}}$) & Linear, Exponential, Sigmoid & 3 \\
+\midrule
+\multirow{2}{*}{\textbf{Parameterization}}
+ & OWUS Thresholds & Base-Free (BF), Optimized (OPT) & 2 \\
+ & Regime Scaling ($m_k$) & Static Baseline, Dynamic K-Means & 2 \\
+\midrule
+\textbf{Energy Closure} & Flux Capacity Boundary & Total Canopy (TC), Canopy Capped (CC), Soil Capped (SC) & 3 \\
+\midrule
+\multicolumn{3}{r}{\textbf{Total Model Variants ($N_{\mathrm{variants}}$)}} & \textbf{216} \\
+\bottomrule
+\end{tabular}%
+}
+\caption{Diagrammatic expansion of the refined combinatorial parameter space.}
+\label{tab:grid_search}
+\end{table}
+
+\subsection*{Step B: Flux Differential ($\Delta \lambda E$)}
+
+To isolate the impact of the v13.3.1 modifications from the baseline atmospheric drivers, the absolute latent heat flux is transformed into a flux differential ($\Delta \lambda E$). For any given variant $v$ at time $t$:
+\begin{equation}
+  \Delta \lambda E_{v,t} = \lambda E_{v,t} - \lambda E_{\mathrm{Base},t}
+\end{equation}
+where $\lambda E_{\mathrm{Base},t}$ is the unaltered flux simulated by the foundational PT-JPL algorithm.
+
+\subsection*{Step C: Variance Grouping Strategy}
+
+Evaluating 216 individual timeseries is analytically intractable. Therefore, the flux differentials are aggregated into margin-based groups to isolate the specific mechanistic behaviors driving the deviations from the baseline.
+
+\textbf{Group 1: Stress Topology Influence ($\Delta \lambda E_{\mathrm{shape}}$)} \\
+To isolate the geometric impact of the descent curves, the differential is averaged across all non-shape dimensions ($216 \div 3 = 72$). This isolates whether a Sigmoid logistic response forces a more severe late-stage dry-down compared to the Linear proportional response:
+\begin{equation}
+  \overline{\Delta \lambda E}_{\mathrm{shape}} = \frac{1}{72} \sum_{i \notin \mathrm{shape}} \left( \lambda E_{i, \mathrm{shape}} - \lambda E_{\mathrm{Base}} \right)
+\end{equation}
+
+\textbf{Group 2: Proxy Depth Discrepancy ($\Delta \lambda E_{\mathrm{proxy}}$)} \\
+By grouping the variance by the chosen moisture proxy, the model quantifies the temporal lag between surface soil depletion and canopy water storage depletion:
+\begin{equation}
+  \overline{\Delta \lambda E}_{\mathrm{proxy}} = \frac{1}{72} \sum_{j \notin \mathrm{proxy}} \left( \lambda E_{j, \mathrm{proxy}} - \lambda E_{\mathrm{Base}} \right)
+\end{equation}
+
+\textbf{Group 3: Regime-Dependent Divergence} \\
+Finally, to validate the K-Means clustering assumption, the flux differentials are partitioned by the assigned ecohydrological state ($k$).
+\begin{equation}
+  \Delta \lambda E_{k} = \{ \Delta \lambda E_{t} \mid \mathrm{Regime}(t) = k \}
+\end{equation}
+
+\end{document}
